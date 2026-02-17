@@ -6,12 +6,13 @@ import asyncio
 from typing import Any, Iterable, Optional
 
 from curl_cffi.requests import AsyncSession
+from curl_cffi.const import CurlOpt
 
 from app.core.config import get_config
 from app.core.logger import logger
 
 
-def _should_skip_ssl_verify() -> bool:
+def _should_skip_proxy_ssl() -> bool:
     return bool(get_config("proxy.skip_proxy_ssl_verify")) and bool(
         get_config("proxy.base_proxy_url")
     )
@@ -27,8 +28,6 @@ class ResettableSession:
         **session_kwargs: Any,
     ):
         self._session_kwargs = dict(session_kwargs)
-        if _should_skip_ssl_verify() and "verify" not in self._session_kwargs:
-            self._session_kwargs["verify"] = False
         config_codes = get_config("retry.reset_session_status_codes")
         if reset_on_status is None:
             reset_on_status = config_codes if config_codes is not None else [403]
@@ -37,9 +36,17 @@ class ResettableSession:
         self._reset_on_status = (
             {int(code) for code in reset_on_status} if reset_on_status else set()
         )
+        self._skip_proxy_ssl = _should_skip_proxy_ssl()
         self._reset_requested = False
         self._reset_lock = asyncio.Lock()
-        self._session = AsyncSession(**self._session_kwargs)
+        self._session = self._create_session()
+
+    def _create_session(self) -> AsyncSession:
+        session = AsyncSession(**self._session_kwargs)
+        if self._skip_proxy_ssl:
+            session.curl.setopt(CurlOpt.PROXY_SSL_VERIFYPEER, 0)
+            session.curl.setopt(CurlOpt.PROXY_SSL_VERIFYHOST, 0)
+        return session
 
     async def _maybe_reset(self) -> None:
         if not self._reset_requested:
@@ -49,7 +56,7 @@ class ResettableSession:
                 return
             self._reset_requested = False
             old_session = self._session
-            self._session = AsyncSession(**self._session_kwargs)
+            self._session = self._create_session()
             try:
                 await old_session.close()
             except Exception:
