@@ -11,6 +11,12 @@ from app.core.config import get_config
 from app.core.logger import logger
 
 
+def _should_skip_ssl_verify() -> bool:
+    return bool(get_config("proxy.skip_proxy_ssl_verify")) and bool(
+        get_config("proxy.base_proxy_url")
+    )
+
+
 class ResettableSession:
     """AsyncSession wrapper that resets connection on specific HTTP status codes."""
 
@@ -21,6 +27,8 @@ class ResettableSession:
         **session_kwargs: Any,
     ):
         self._session_kwargs = dict(session_kwargs)
+        if _should_skip_ssl_verify() and "verify" not in self._session_kwargs:
+            self._session_kwargs["verify"] = False
         config_codes = get_config("retry.reset_session_status_codes")
         if reset_on_status is None:
             reset_on_status = config_codes if config_codes is not None else [403]
