@@ -42,7 +42,13 @@ class ResettableSession:
         self._session = self._create_session()
 
     def _create_session(self) -> AsyncSession:
-        return AsyncSession(**self._session_kwargs)
+        kwargs = dict(self._session_kwargs)
+        if self._skip_proxy_ssl:
+            opts = kwargs.get("curl_options", {})
+            opts[CurlOpt.PROXY_SSL_VERIFYPEER] = 0
+            opts[CurlOpt.PROXY_SSL_VERIFYHOST] = 0
+            kwargs["curl_options"] = opts
+        return AsyncSession(**kwargs)
 
     async def _maybe_reset(self) -> None:
         if not self._reset_requested:
@@ -61,11 +67,6 @@ class ResettableSession:
 
     async def _request(self, method: str, *args: Any, **kwargs: Any):
         await self._maybe_reset()
-        if self._skip_proxy_ssl:
-            opts = kwargs.get("curl_options", {})
-            opts[CurlOpt.PROXY_SSL_VERIFYPEER] = 0
-            opts[CurlOpt.PROXY_SSL_VERIFYHOST] = 0
-            kwargs["curl_options"] = opts
         response = await getattr(self._session, method)(*args, **kwargs)
         if self._reset_on_status and response.status_code in self._reset_on_status:
             self._reset_requested = True
